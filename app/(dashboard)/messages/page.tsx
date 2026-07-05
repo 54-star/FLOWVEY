@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Search,
   RotateCcw,
@@ -11,78 +11,12 @@ import {
   MessageSquare,
   Send,
 } from "lucide-react";
-
-type MessageStatus = "pending" | "sent" | "failed";
-
-type FollowUpMessage = {
-  id: string;
-  guestName: string;
-  phone: string;
-  room: string;
-  content: string;
-  status: MessageStatus;
-  scheduledFor: string;
-  sentAt: string | null;
-  failReason: string | null;
-};
-
-const initialMessages: FollowUpMessage[] = [
-  {
-    id: "1",
-    guestName: "Sarah Johnson",
-    phone: "+2348012345678",
-    room: "204",
-    content: "Hi Sarah, thanks for staying with us! We'd love your feedback.",
-    status: "sent",
-    scheduledFor: "2026-07-03 10:00",
-    sentAt: "2026-07-03 10:00",
-    failReason: null,
-  },
-  {
-    id: "2",
-    guestName: "Michael Chen",
-    phone: "+14155552671",
-    room: "310",
-    content: "Hi Michael, just checking in — how's your stay going so far?",
-    status: "pending",
-    scheduledFor: "2026-07-05 09:00",
-    sentAt: null,
-    failReason: null,
-  },
-  {
-    id: "3",
-    guestName: "Amara Obi",
-    phone: "+2347098765432",
-    room: "112",
-    content: "Hi Amara, thanks for staying with us! We'd love your feedback.",
-    status: "failed",
-    scheduledFor: "2026-06-27 11:00",
-    sentAt: null,
-    failReason: "Invalid phone number format",
-  },
-  {
-    id: "4",
-    guestName: "Daniel Kim",
-    phone: "+15551234567",
-    room: "118",
-    content: "Hi Daniel, welcome! Let us know if you need anything during your stay.",
-    status: "pending",
-    scheduledFor: "2026-07-04 14:00",
-    sentAt: null,
-    failReason: null,
-  },
-  {
-    id: "5",
-    guestName: "Priya Patel",
-    phone: "+919812345678",
-    room: "220",
-    content: "Hi Priya, thanks for staying with us! We'd love your feedback.",
-    status: "failed",
-    scheduledFor: "2026-07-01 08:00",
-    sentAt: null,
-    failReason: "Message delivery timed out",
-  },
-];
+import {
+  MessageRecord,
+  MessageStatus,
+  loadMessages,
+  saveMessages,
+} from "@/lib/storage";
 
 const tabs: { key: "all" | MessageStatus; label: string }[] = [
   { key: "all", label: "All" },
@@ -92,9 +26,19 @@ const tabs: { key: "all" | MessageStatus; label: string }[] = [
 ];
 
 export default function MessagesPage() {
-  const [messages, setMessages] = useState<FollowUpMessage[]>(initialMessages);
+  const [messages, setMessages] = useState<MessageRecord[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState<"all" | MessageStatus>("all");
   const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    setMessages(loadMessages());
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (loaded) saveMessages(messages);
+  }, [messages, loaded]);
 
   const counts = useMemo(() => {
     return {
@@ -107,7 +51,10 @@ export default function MessagesPage() {
 
   const filteredMessages = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return messages.filter((m) => {
+    const sorted = [...messages].sort(
+      (a, b) => new Date(b.scheduledFor).getTime() - new Date(a.scheduledFor).getTime()
+    );
+    return sorted.filter((m) => {
       const matchesTab = activeTab === "all" || m.status === activeTab;
       const matchesSearch =
         !q ||
@@ -278,7 +225,7 @@ export default function MessagesPage() {
 
         {filteredMessages.length === 0 && (
           <div className="rounded-xl border border-border bg-card p-10 text-center text-muted-foreground">
-            No messages match this view.
+            No messages yet. Messages you send from the Guests page will appear here.
           </div>
         )}
       </div>

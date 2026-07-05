@@ -1,107 +1,23 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Search,
   RotateCcw,
   MessageCircle,
-  X,
-  Mail,
-  MessageSquare,
   CheckCircle2,
   XCircle,
-  Clock,
   TrendingUp,
 } from "lucide-react";
+import {
+  MessageRecord,
+  loadMessages,
+  saveMessages,
+  whatsappLink,
+  nowStamp,
+} from "@/lib/storage";
 
-type Channel = "whatsapp" | "sms" | "email";
-type HistoryStatus = "delivered" | "sent" | "failed";
-
-type HistoryEntry = {
-  id: string;
-  guestName: string;
-  phone: string;
-  room: string;
-  content: string;
-  channel: Channel;
-  status: HistoryStatus;
-  sentAt: string; // ISO-ish "YYYY-MM-DD HH:mm"
-};
-
-const initialHistory: HistoryEntry[] = [
-  {
-    id: "1",
-    guestName: "Sarah Johnson",
-    phone: "+2348012345678",
-    room: "204",
-    content: "Hi Sarah, thanks for staying with us! We'd love your feedback.",
-    channel: "whatsapp",
-    status: "delivered",
-    sentAt: "2026-07-03 10:00",
-  },
-  {
-    id: "2",
-    guestName: "Michael Chen",
-    phone: "+14155552671",
-    room: "310",
-    content: "Hi Michael, just checking in — how's your stay going so far?",
-    channel: "whatsapp",
-    status: "sent",
-    sentAt: "2026-07-03 09:15",
-  },
-  {
-    id: "3",
-    guestName: "Amara Obi",
-    phone: "+2347098765432",
-    room: "112",
-    content: "Hi Amara, thanks for staying with us! We'd love your feedback.",
-    channel: "sms",
-    status: "failed",
-    sentAt: "2026-07-02 11:00",
-  },
-  {
-    id: "4",
-    guestName: "Daniel Kim",
-    phone: "+15551234567",
-    room: "118",
-    content: "Hi Daniel, welcome! Let us know if you need anything during your stay.",
-    channel: "email",
-    status: "delivered",
-    sentAt: "2026-07-02 08:30",
-  },
-  {
-    id: "5",
-    guestName: "Priya Patel",
-    phone: "+919812345678",
-    room: "220",
-    content: "Hi Priya, thanks for staying with us! We'd love your feedback.",
-    channel: "whatsapp",
-    status: "failed",
-    sentAt: "2026-06-27 08:00",
-  },
-  {
-    id: "6",
-    guestName: "Sarah Johnson",
-    phone: "+2348012345678",
-    room: "204",
-    content: "Reminder: check-out is at 12pm tomorrow. Let us know if you need a late check-out.",
-    channel: "whatsapp",
-    status: "delivered",
-    sentAt: "2026-06-27 18:20",
-  },
-];
-
-const channelIcons: Record<Channel, React.ReactNode> = {
-  whatsapp: <MessageCircle size={14} />,
-  sms: <MessageSquare size={14} />,
-  email: <Mail size={14} />,
-};
-
-const channelLabels: Record<Channel, string> = {
-  whatsapp: "WhatsApp",
-  sms: "SMS",
-  email: "Email",
-};
+type HistoryStatus = "sent" | "failed";
 
 function formatDateGroup(dateStr: string) {
   const date = new Date(dateStr.replace(" ", "T"));
@@ -125,18 +41,33 @@ function formatDateGroup(dateStr: string) {
 }
 
 export default function MessageHistoryPage() {
-  const [history, setHistory] = useState<HistoryEntry[]>(initialHistory);
+  const [messages, setMessages] = useState<MessageRecord[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
-  const [channelFilter, setChannelFilter] = useState<"all" | Channel>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | HistoryStatus>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  useEffect(() => {
+    setMessages(loadMessages());
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (loaded) saveMessages(messages);
+  }, [messages, loaded]);
+
+  // History only shows messages that were actually attempted, not still-pending ones
+  const history = useMemo(
+    () => messages.filter((m) => m.status === "sent" || m.status === "failed"),
+    [messages]
+  );
+
   const stats = useMemo(() => {
     const total = history.length;
-    const delivered = history.filter((h) => h.status === "delivered").length;
+    const sent = history.filter((h) => h.status === "sent").length;
     const failed = history.filter((h) => h.status === "failed").length;
-    const rate = total === 0 ? 0 : Math.round((delivered / total) * 100);
-    return { total, delivered, failed, rate };
+    const rate = total === 0 ? 0 : Math.round((sent / total) * 100);
+    return { total, sent, failed, rate };
   }, [history]);
 
   const filtered = useMemo(() => {
@@ -147,51 +78,45 @@ export default function MessageHistoryPage() {
         h.guestName.toLowerCase().includes(q) ||
         h.room.toLowerCase().includes(q) ||
         h.content.toLowerCase().includes(q);
-      const matchesChannel = channelFilter === "all" || h.channel === channelFilter;
       const matchesStatus = statusFilter === "all" || h.status === statusFilter;
-      return matchesSearch && matchesChannel && matchesStatus;
+      return matchesSearch && matchesStatus;
     });
-  }, [history, search, channelFilter, statusFilter]);
+  }, [history, search, statusFilter]);
 
   const grouped = useMemo(() => {
     const sorted = [...filtered].sort(
-      (a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime()
+      (a, b) =>
+        new Date(b.sentAt || b.scheduledFor).getTime() -
+        new Date(a.sentAt || a.scheduledFor).getTime()
     );
-    const groups: Record<string, HistoryEntry[]> = {};
+    const groups: Record<string, MessageRecord[]> = {};
     sorted.forEach((entry) => {
-      const label = formatDateGroup(entry.sentAt);
+      const label = formatDateGroup(entry.sentAt || entry.scheduledFor);
       if (!groups[label]) groups[label] = [];
       groups[label].push(entry);
     });
     return groups;
   }, [filtered]);
 
-  function whatsappLink(phone: string, guestName: string, content: string) {
-    const digitsOnly = phone.replace(/[^\d]/g, "");
-    return "https://wa.me/" + digitsOnly + "?text=" + encodeURIComponent(content);
-  }
-
   function resendMessage(id: string) {
-    setHistory((prev) =>
-      prev.map((h) =>
-        h.id === id
-          ? { ...h, status: "sent" as HistoryStatus, sentAt: new Date().toISOString().slice(0, 16).replace("T", " ") }
-          : h
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === id
+          ? { ...m, status: "sent", sentAt: nowStamp(), failReason: null }
+          : m
       )
     );
   }
 
-  function statusBadge(status: HistoryStatus) {
-    const config: Record<HistoryStatus, { label: string; className: string; icon: React.ReactNode }> = {
-      delivered: {
+  function statusBadge(status: MessageRecord["status"]) {
+  const config: Record<"sent" | "failed", 
+  { label: string; className: string; icon:
+     React.ReactNode }> = {
+   
+      sent: {
         label: "Delivered",
         className: "bg-green-500/10 text-green-600",
         icon: <CheckCircle2 size={12} />,
-      },
-      sent: {
-        label: "Sent",
-        className: "bg-blue-500/10 text-blue-600",
-        icon: <Clock size={12} />,
       },
       failed: {
         label: "Failed",
@@ -199,7 +124,8 @@ export default function MessageHistoryPage() {
         icon: <XCircle size={12} />,
       },
     };
-    const c = config[status];
+    const c = config[status as "sent" | "failed"];
+    if (!c) return null;
     return (
       <span
         className={
@@ -231,7 +157,7 @@ export default function MessageHistoryPage() {
         </div>
         <div className="rounded-xl border border-border bg-card p-4">
           <p className="text-xs text-muted-foreground">Delivered</p>
-          <p className="mt-1 text-xl font-bold text-green-600">{stats.delivered}</p>
+          <p className="mt-1 text-xl font-bold text-green-600">{stats.sent}</p>
         </div>
         <div className="rounded-xl border border-border bg-card p-4">
           <p className="text-xs text-muted-foreground">Failed</p>
@@ -263,24 +189,12 @@ export default function MessageHistoryPage() {
         </div>
 
         <select
-          value={channelFilter}
-          onChange={(e) => setChannelFilter(e.target.value as "all" | Channel)}
-          className="rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary"
-        >
-          <option value="all">All channels</option>
-          <option value="whatsapp">WhatsApp</option>
-          <option value="sms">SMS</option>
-          <option value="email">Email</option>
-        </select>
-
-        <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as "all" | HistoryStatus)}
           className="rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary"
         >
           <option value="all">All statuses</option>
-          <option value="delivered">Delivered</option>
-          <option value="sent">Sent</option>
+          <option value="sent">Delivered</option>
           <option value="failed">Failed</option>
         </select>
       </div>
@@ -309,8 +223,8 @@ export default function MessageHistoryPage() {
                             Room {entry.room}
                           </span>
                           <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                            {channelIcons[entry.channel]}
-                            {channelLabels[entry.channel]}
+                            <MessageCircle size={14} />
+                            WhatsApp
                           </span>
                           {statusBadge(entry.status)}
                         </div>
@@ -336,8 +250,14 @@ export default function MessageHistoryPage() {
                         )}
 
                         <p className="text-xs text-muted-foreground/70 mt-1">
-                          {entry.sentAt}
+                          {entry.sentAt || entry.scheduledFor}
                         </p>
+
+                        {entry.failReason && (
+                          <p className="text-xs text-red-500 mt-1">
+                            Reason: {entry.failReason}
+                          </p>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0 self-start">
@@ -351,7 +271,7 @@ export default function MessageHistoryPage() {
                         </button>
 <a
                         
-                          href={whatsappLink(entry.phone, entry.guestName, entry.content)}
+                          href={whatsappLink(entry.phone, entry.content)}
                           target="_blank"
                           rel="noopener noreferrer"
                           title="Send on WhatsApp"
@@ -370,7 +290,7 @@ export default function MessageHistoryPage() {
 
         {Object.keys(grouped).length === 0 && (
           <div className="rounded-xl border border-border bg-card p-10 text-center text-muted-foreground">
-            No messages match your filters.
+            No message history yet. Messages you send from the Guests page will appear here.
           </div>
         )}
       </div>

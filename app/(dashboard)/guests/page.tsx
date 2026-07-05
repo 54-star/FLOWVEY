@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Search,
   Plus,
@@ -10,51 +10,17 @@ import {
   MessageCircle,
   X,
   BedDouble,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
-
-type Guest = {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  room: string;
-  checkIn: string;
-  checkOut: string;
-  status: "checked-in" | "checked-out" | "upcoming";
-};
-
-const initialGuests: Guest[] = [
-  {
-    id: "1",
-    name: "Sarah Johnson",
-    email: "sarah.j@example.com",
-    phone: "+2348012345678",
-    room: "204",
-    checkIn: "2026-06-28",
-    checkOut: "2026-07-03",
-    status: "checked-in",
-  },
-  {
-    id: "2",
-    name: "Michael Chen",
-    email: "michael.chen@example.com",
-    phone: "+14155552671",
-    room: "310",
-    checkIn: "2026-07-01",
-    checkOut: "2026-07-05",
-    status: "checked-in",
-  },
-  {
-    id: "3",
-    name: "Amara Obi",
-    email: "amara.obi@example.com",
-    phone: "+2347098765432",
-    room: "112",
-    checkIn: "2026-06-20",
-    checkOut: "2026-06-27",
-    status: "checked-out",
-  },
-];
+import {
+  Guest,
+  loadGuests,
+  saveGuests,
+  addMessageRecord,
+  whatsappLink,
+  nowStamp,
+} from "@/lib/storage";
 
 const emptyForm: Omit<Guest, "id"> = {
   name: "",
@@ -66,16 +32,9 @@ const emptyForm: Omit<Guest, "id"> = {
   status: "upcoming",
 };
 
-function whatsappLink(phone: string, guestName: string) {
-  const digitsOnly = phone.replace(/[^\d]/g, "");
-  const reviewUrl = "https://flowvey.app/review";
-  const message =
-    "Hi " + guestName + ", thanks for staying with us! We'd love your feedback: " + reviewUrl;
-  return "https://wa.me/" + digitsOnly + "?text=" + encodeURIComponent(message);
-}
-
 export default function GuestsPage() {
-  const [guests, setGuests] = useState<Guest[]>(initialGuests);
+  const [guests, setGuests] = useState<Guest[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
 
   const [formOpen, setFormOpen] = useState(false);
@@ -84,6 +43,16 @@ export default function GuestsPage() {
 
   const [detailsGuest, setDetailsGuest] = useState<Guest | null>(null);
   const [deleteGuest, setDeleteGuest] = useState<Guest | null>(null);
+  const [confirmGuest, setConfirmGuest] = useState<Guest | null>(null);
+
+  useEffect(() => {
+    setGuests(loadGuests());
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (loaded) saveGuests(guests);
+  }, [guests, loaded]);
 
   const filteredGuests = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -137,6 +106,39 @@ export default function GuestsPage() {
     if (!deleteGuest) return;
     setGuests((prev) => prev.filter((g) => g.id !== deleteGuest.id));
     setDeleteGuest(null);
+  }
+
+  function messageContentFor(guest: Guest) {
+    return (
+      "Hi " +
+      guest.name +
+      ", thanks for staying with us! We'd love your feedback: https://flowvey.app/review"
+    );
+  }
+
+  // Step 1: open WhatsApp, then ask for confirmation instead of assuming success
+  function startWhatsappSend(guest: Guest) {
+    const url = whatsappLink(guest.phone, messageContentFor(guest));
+    window.open(url, "_blank", "noopener,noreferrer");
+    setConfirmGuest(guest);
+  }
+
+  // Step 2: log the outcome based on what the user tells us actually happened
+  function resolveConfirmation(status: "sent" | "failed", failReason: string | null) {
+    if (!confirmGuest) return;
+    addMessageRecord({
+      id: Date.now().toString(),
+      guestName: confirmGuest.name,
+      phone: confirmGuest.phone,
+      room: confirmGuest.room,
+      content: messageContentFor(confirmGuest),
+      channel: "whatsapp",
+      status,
+      scheduledFor: nowStamp(),
+      sentAt: status === "sent" ? nowStamp() : null,
+      failReason,
+    });
+    setConfirmGuest(null);
   }
 
   function statusBadge(status: Guest["status"]) {
@@ -218,15 +220,13 @@ export default function GuestsPage() {
                   <td className="px-4 py-3">{statusBadge(guest.status)}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
-                      <a
-                      href={whatsappLink(guest.phone, guest.name)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
-              >
-                <MessageCircle size={16} />
-                Message
-              </a>
+                      <button
+                        onClick={() => startWhatsappSend(guest)}
+                        title="Message on WhatsApp"
+                        className="rounded-md p-1.5 text-green-600 hover:bg-accent transition-colors"
+                      >
+                        <MessageCircle size={16} />
+                      </button>
                       <button onClick={() => setDetailsGuest(guest)} title="View details" className="rounded-md p-1.5 hover:bg-accent transition-colors">
                         <Eye size={16} />
                       </button>
@@ -244,7 +244,7 @@ export default function GuestsPage() {
               {filteredGuests.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
-                    No guests match your search.
+                    No guests yet. Click "Add Guest" to create your first one.
                   </td>
                 </tr>
               )}
@@ -396,14 +396,13 @@ export default function GuestsPage() {
             </div>
 
             <div className="flex justify-end gap-2 pt-5">
-              <a href={whatsappLink(detailsGuest.phone, detailsGuest.name)}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                onClick={() => startWhatsappSend(detailsGuest)}
                 className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
               >
                 <MessageCircle size={16} />
                 Message
-              </a>
+              </button>
             </div>
           </div>
         </div>
@@ -424,6 +423,46 @@ export default function GuestsPage() {
               </button>
               <button onClick={confirmDelete} className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity">
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delivery confirmation prompt */}
+      {confirmGuest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5">
+            <h2 className="text-lg font-semibold mb-2">Did the message send?</h2>
+            <p className="text-sm text-muted-foreground mb-5">
+              We opened WhatsApp for{" "}
+              <span className="font-medium text-foreground">{confirmGuest.name}</span>.
+              Let us know what happened so we can keep your records accurate.
+            </p>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => resolveConfirmation("sent", null)}
+                className="flex w-full items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium hover:bg-accent transition-colors"
+              >
+                <CheckCircle2 size={16} className="text-green-600" />
+                Yes, it sent successfully
+              </button>
+
+              <button
+                onClick={() => resolveConfirmation("failed", "Number not on WhatsApp")}
+                className="flex w-full items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium hover:bg-accent transition-colors"
+              >
+                <XCircle size={16} className="text-red-500" />
+                No, number isn't on WhatsApp
+              </button>
+
+              <button
+                onClick={() => resolveConfirmation("failed", "Message did not send")}
+                className="flex w-full items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium hover:bg-accent transition-colors"
+              >
+                <XCircle size={16} className="text-red-500" />
+                No, something else went wrong
               </button>
             </div>
           </div>
